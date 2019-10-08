@@ -1,34 +1,24 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Polly.Contrib.FallbackBulkheadPolicy
 {
-    public class BulkheadFallbackPolicy<TResult> : AsyncPolicy<TResult>
+    /// <summary>
+    /// A bulkhead-isolation policy which can be applied to delegates.
+    /// </summary>
+    public class AsyncFallbackBulkheadPolicy<TResult> : AsyncPolicy<TResult>, IFallbackBulkheadPolicy
     {
         private readonly int _maxQueueingActions;
         private readonly SemaphoreSlim _maxParallelizationSemaphore;
         private readonly FallbackAction<TResult> _fallbackAction;
         private ConcurrentQueue<ActionContext<TResult>> _queuedActions;
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="BulkheadFallbackPolicy{TResult}"/> class, which limits the maximum
-        /// concurrency of actions executed through the policy.
-        /// Imposing a maximum concurrency limits the potential of governed actions, when faulting, to bring down the system.
-        /// <para>When an execution would cause the number of actions executing concurrently through the policy to exceed
-        /// <paramref name="maxParallelization"/>, the policy allows a further <paramref name="maxQueuingActions"/> executions to queue,
-        /// waiting for a concurrent execution slot. When an execution would cause the number of queuing actions to exceed
-        /// <paramref name="maxQueuingActions"/>, <paramref name="fallbackAction"/> is called asynchronously with a list of the
-        /// queued actions in FIFO order and length >= <paramref name="maxQueuingActions"/>.</para>
-        /// </summary>
-        /// <param name="maxParallelization">The maximum number of concurrent actions that may be executing through the policy.</param>
-        /// <param name="maxQueuingActions">The maxmimum number of actions that may be queuing, waiting for an execution slot.</param>
-        /// <param name="fallbackAction">An action to call asynchronously, if the bulkhead rejects execution due to oversubscription.</param>
-        /// <returns>The policy instance.</returns>
-        public BulkheadFallbackPolicy(
+        internal AsyncFallbackBulkheadPolicy(
             int maxParallelization,
             int maxQueuingActions,
             FallbackAction<TResult> fallbackAction)
@@ -39,6 +29,18 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             _queuedActions = new ConcurrentQueue<ActionContext<TResult>>();
         }
 
+        /// <summary>
+        /// Gets the number of slots currently available for executing actions through the bulkhead.
+        /// </summary>
+        public int BulkheadAvailableCount => _maxParallelizationSemaphore.CurrentCount;
+
+        /// <summary>
+        /// Gets the number of slots currently available for queuing actions for execution through the bulkhead.
+        /// </summary>
+        public int QueueAvailableCount => Math.Max(_maxQueueingActions - _queuedActions.Count, 0);
+
+        /// <inheritdoc/>
+        [DebuggerStepThrough]
         protected override Task<TResult> ImplementationAsync(
             Func<Context, CancellationToken, Task<TResult>> action,
             Context context,
@@ -101,6 +103,12 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             {
                 await ExecuteAsync();
             }
+        }
+
+        /// <inheritdoc/>
+        public void Dispose()
+        {
+            _maxParallelizationSemaphore.Dispose();
         }
     }
 }
