@@ -79,18 +79,18 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             }
             catch (Exception ex)
             {
-                foreach (var ctx in batch)
+                foreach (var actionCtx in batch)
                 {
-                    ctx.TaskCompletionSource.TrySetException(ex);
+                    actionCtx.TaskCompletionSource.TrySetException(ex);
                 }
             }
         }
 
         private async Task ExecuteAsync()
         {
-            while (_queuedActions.TryDequeue(out var ctx))
+            while (_queuedActions.TryDequeue(out var actionCtx))
             {
-                await ctx.ExecuteAsync();
+                await actionCtx.ExecuteAsync();
             }
 
             _maxParallelizationSemaphore.Release();
