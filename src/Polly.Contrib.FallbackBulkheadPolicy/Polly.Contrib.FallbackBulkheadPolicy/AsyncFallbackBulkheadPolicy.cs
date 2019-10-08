@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -45,12 +47,62 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             CancellationToken cancellationToken,
             bool continueOnCapturedContext)
         {
-            return AsyncFallbackBulkheadEngine.ImplementationAsync(
-                new ActionContext<TResult>(action, context, cancellationToken),
-                _fallbackAction,
-                _maxParallelizationSemaphore,
-                ref _queuedActions,
-                _maxQueueingActions);
+            var actionCtx = new ActionContext<TResult>(action, context, cancellationToken);
+            var batch = default(ConcurrentQueue<ActionContext<TResult>>);
+
+            _queuedActions.Enqueue(actionCtx);
+
+            var initialValue = _queuedActions;
+            if (_queuedActions.Count >= _maxQueueingActions)
+            {
+                var newQueue = new ConcurrentQueue<ActionContext<TResult>>();
+                batch = Interlocked.CompareExchange(ref _queuedActions, newQueue, initialValue);
+            }
+
+            if (batch == initialValue && batch.Any())
+            {
+                _ = ExecuteFallbackAsync(batch.ToList());
+            }
+            else if (_maxParallelizationSemaphore.Wait(0))
+            {
+                _ = ExecuteAsync();
+            }
+
+            return actionCtx.TaskCompletionSource.Task;
+        }
+
+        private async Task ExecuteFallbackAsync(IReadOnlyCollection<ActionContext<TResult>> batch)
+        {
+            try
+            {
+                await _fallbackAction(batch);
+            }
+            catch (Exception ex)
+            {
+                foreach (var actionCtx in batch)
+                {
+                    actionCtx.TaskCompletionSource.TrySetException(ex);
+                }
+            }
+        }
+
+        private async Task ExecuteAsync()
+        {
+            while (_queuedActions.TryDequeue(out var actionCtx))
+            {
+                await actionCtx.ExecuteAsync();
+            }
+
+            _maxParallelizationSemaphore.Release();
+
+            //// This check is needed to handle the possible race-condition where an
+            //// action is enqueued between the last _queuedActions.TryDequeue(...)
+            //// and _maxParallelizationSemaphore.Release(), AND the thread who did
+            //// the enqueuing was unable to enter the _maxParallelizationSemaphore.
+            if (!_queuedActions.IsEmpty && _maxParallelizationSemaphore.Wait(0))
+            {
+                await ExecuteAsync();
+            }
         }
 
         /// <inheritdoc/>
