@@ -4,7 +4,7 @@ using System;
 
 namespace Polly.Contrib.FallbackBulkheadPolicy
 {
-    public partial class AsyncFallbackBulkheadTResultSyntax
+    public partial class AsyncFallbackBulkheadPolicy
     {
         /// <summary>
         /// <para>Builds a bulkhead isolation <see cref="AsyncPolicy{TResult}"/>, which limits the maximum concurrency of actions executed through the policy.  Imposing a maximum concurrency limits the potential of governed actions, when faulting, to bring down the system.</para>

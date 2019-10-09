@@ -8,6 +8,10 @@ using System.Threading.Tasks;
 
 namespace Polly.Contrib.FallbackBulkheadPolicy
 {
+    public partial class AsyncFallbackBulkheadPolicy
+    {
+    }
+
     /// <summary>
     /// A bulkhead-isolation policy which can be applied to delegates.
     /// </summary>
@@ -48,11 +52,12 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             bool continueOnCapturedContext)
         {
             var actionCtx = new ActionContext<TResult>(action, context, cancellationToken);
-            var batch = default(ConcurrentQueue<ActionContext<TResult>>);
 
             _queuedActions.Enqueue(actionCtx);
 
+            var batch = default(ConcurrentQueue<ActionContext<TResult>>);
             var initialValue = _queuedActions;
+
             if (_queuedActions.Count >= _maxQueueingActions)
             {
                 var newQueue = new ConcurrentQueue<ActionContext<TResult>>();
