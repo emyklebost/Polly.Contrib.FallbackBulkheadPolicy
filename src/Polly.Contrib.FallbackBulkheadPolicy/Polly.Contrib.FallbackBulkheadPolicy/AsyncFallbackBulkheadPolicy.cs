@@ -44,7 +44,6 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
         public int QueueAvailableCount => Math.Max(_maxQueueingActions - _queuedActions.Count, 0);
 
         /// <inheritdoc/>
-        [DebuggerStepThrough]
         protected override Task<TResult> ImplementationAsync(
             Func<Context, CancellationToken, Task<TResult>> action,
             Context context,
@@ -58,7 +57,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             var batch = default(ConcurrentQueue<ActionContext<TResult>>);
             var initialValue = _queuedActions;
 
-            if (_queuedActions.Count >= _maxQueueingActions)
+            if (_queuedActions.Count > _maxQueueingActions)
             {
                 var newQueue = new ConcurrentQueue<ActionContext<TResult>>();
                 batch = Interlocked.CompareExchange(ref _queuedActions, newQueue, initialValue);
