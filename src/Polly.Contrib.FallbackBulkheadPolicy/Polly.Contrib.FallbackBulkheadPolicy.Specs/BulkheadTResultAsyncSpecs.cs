@@ -58,7 +58,12 @@ namespace Polly.Contrib.FallbackBulkheadPolicy.Specs
             Context contextPassedToExecute = new Context(operationKey);
 
             Context contextPassedToOnRejected = null;
-            FallbackAction<int> onRejectedAsync = async ctx => { contextPassedToOnRejected = ctx.First().PollyContext; await TaskHelper.EmptyTask.ConfigureAwait(false); };
+            FallbackAction<int> onRejectedAsync = async ctx =>
+            {
+                contextPassedToOnRejected = ctx.First().PollyContext;
+                await TaskHelper.EmptyTask.ConfigureAwait(false);
+                throw new BulkheadRejectedException();
+            };
 
             var bulkhead = AsyncFallbackBulkheadPolicy.Create<int>(1, onRejectedAsync);
 
@@ -75,7 +80,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy.Specs
 
                 Within(shimTimeSpan, () => bulkhead.BulkheadAvailableCount.Should().Be(0)); // Time for the other thread to kick up and take the bulkhead.
 
-                bulkhead.Awaiting(async b => await b.ExecuteAsync(ctx => Task.FromResult(1), contextPassedToExecute));
+                bulkhead.Awaiting(async b => await b.ExecuteAsync(ctx => Task.FromResult(1), contextPassedToExecute)).ShouldThrow<BulkheadRejectedException>();
 
                 cancellationSource.Cancel();
                 tcs.SetCanceled();
