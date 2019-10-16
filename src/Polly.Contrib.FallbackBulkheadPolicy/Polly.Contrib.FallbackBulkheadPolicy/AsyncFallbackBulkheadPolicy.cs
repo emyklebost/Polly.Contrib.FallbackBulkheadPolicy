@@ -16,7 +16,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
     /// </summary>
     public class AsyncFallbackBulkheadPolicy<TResult> : AsyncPolicy<TResult>, IFallbackBulkheadPolicy<TResult>
     {
-        private readonly IReadOnlyCollection<int> _maxQueueingActionsLimits;
+        private readonly int[] _maxQueueingActionsLimits;
         private readonly SemaphoreSlim _maxParallelizationSemaphore;
         private readonly FallbackAction<TResult> _fallbackAction;
         private readonly ConcurrentQueue<ActionContext<TResult>> _queuedActions;

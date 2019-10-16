@@ -32,7 +32,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
         public static AsyncFallbackBulkheadPolicy<TResult> Create<TResult>(int maxParallelization, FallbackAction<TResult> fallbackActionAsync, params int[] maxQueuingActionsLimits)
         {
             if (maxParallelization <= 0) throw new ArgumentOutOfRangeException(nameof(maxParallelization), "Value must be greater than zero.");
-            if (maxQueuingActionsLimits.Any(x => x < 0)) throw new ArgumentOutOfRangeException(nameof(maxQueuingActionsLimits), "Value must be greater than or equal to zero.");
+            if (maxQueuingActionsLimits.Any(x => x <= 0)) throw new ArgumentOutOfRangeException(nameof(maxQueuingActionsLimits), "Value must be greater than zero.");
             if (fallbackActionAsync == null) throw new ArgumentNullException(nameof(fallbackActionAsync));
 
             return new AsyncFallbackBulkheadPolicy<TResult>(

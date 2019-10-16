@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,7 +10,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
     {
         internal static async Task ImplementationAsync<TResult>(
             SemaphoreSlim maxParallelizationSemaphore,
-            IReadOnlyCollection<int> maxQueueingActionsLimits,
+            int[] maxQueueingActionsLimits,
             ConcurrentQueue<ActionContext<TResult>> queuedActions,
             FallbackAction<TResult> fallbackAction)
         {
@@ -27,10 +26,10 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
 
                 lock (queuedActions)
                 {
-                    var brokenLimits = maxQueueingActionsLimits.Where(x => queuedActions.Count >= x);
-                    if (brokenLimits.Any())
+                    var exceededLimits = maxQueueingActionsLimits.Where(x => queuedActions.Count >= x);
+                    if (exceededLimits.Any())
                     {
-                        batch = queuedActions.Dequeue(brokenLimits.First());
+                        batch = queuedActions.Dequeue(exceededLimits.First());
                     }
                     else if (!queuedActions.TryDequeue(out actionCtx))
                     {
