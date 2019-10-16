@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Polly;
 
 namespace Polly.Contrib.FallbackBulkheadPolicy
 {
@@ -15,19 +15,19 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
     /// <summary>
     /// A bulkhead-isolation policy which can be applied to delegates.
     /// </summary>
-    public class AsyncFallbackBulkheadPolicy<TResult> : AsyncPolicy<TResult>, IFallbackBulkheadPolicy
+    public class AsyncFallbackBulkheadPolicy<TResult> : AsyncPolicy<TResult>, IFallbackBulkheadPolicy<TResult>
     {
-        private readonly int _maxQueueingActions;
+        private readonly IReadOnlyCollection<int> _maxQueueingActionsLimits;
         private readonly SemaphoreSlim _maxParallelizationSemaphore;
         private readonly FallbackAction<TResult> _fallbackAction;
-        private ConcurrentQueue<ActionContext<TResult>> _queuedActions;
+        private readonly ConcurrentQueue<ActionContext<TResult>> _queuedActions;
 
         internal AsyncFallbackBulkheadPolicy(
             int maxParallelization,
-            int maxQueuingActions,
-            FallbackAction<TResult> fallbackAction)
+            FallbackAction<TResult> fallbackAction,
+            params int[] maxQueueingActionsLimits)
         {
-            _maxQueueingActions = maxQueuingActions;
+            _maxQueueingActionsLimits = maxQueueingActionsLimits.OrderByDescending(x => x).ToArray();
             _maxParallelizationSemaphore = new SemaphoreSlim(maxParallelization, maxParallelization);
             _fallbackAction = fallbackAction;
             _queuedActions = new ConcurrentQueue<ActionContext<TResult>>();
@@ -41,7 +41,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
         /// <summary>
         /// Gets the number of slots currently available for queuing actions for execution through the bulkhead.
         /// </summary>
-        public int QueueAvailableCount => Math.Max(_maxQueueingActions - _queuedActions.Count, 0);
+        public int QueueAvailableCount => Math.Max(_maxQueueingActionsLimits.Min() - _queuedActions.Count, 0);
 
         /// <inheritdoc/>
         protected override Task<TResult> ImplementationAsync(
@@ -51,28 +51,65 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             bool continueOnCapturedContext)
         {
             var actionCtx = new ActionContext<TResult>(action, context, cancellationToken);
-
             _queuedActions.Enqueue(actionCtx);
 
-            var batch = default(ConcurrentQueue<ActionContext<TResult>>);
-            var initialValue = _queuedActions;
-
-            if (_queuedActions.Count > _maxQueueingActions)
-            {
-                var newQueue = new ConcurrentQueue<ActionContext<TResult>>();
-                batch = Interlocked.CompareExchange(ref _queuedActions, newQueue, initialValue);
-            }
-
-            if (batch == initialValue && batch.Any())
-            {
-                _ = ExecuteFallbackAsync(batch.ToList());
-            }
-            else if (_maxParallelizationSemaphore.Wait(0))
-            {
-                _ = ExecuteAsync();
-            }
+            _ = HandleAsync();
 
             return actionCtx.TaskCompletionSource.Task;
+        }
+
+        private async Task HandleAsync()
+        {
+            if (!_maxParallelizationSemaphore.Wait(0))
+            {
+                return;
+            }
+
+            while (true)
+            {
+                var batch = default(List<ActionContext<TResult>>);
+                var actionCtx = default(ActionContext<TResult>);
+
+                lock (_queuedActions)
+                {
+                    var brokenLimits = _maxQueueingActionsLimits.Where(x => _queuedActions.Count >= x);
+                    if (brokenLimits.Any())
+                    {
+                        batch = Dequeue(brokenLimits.First());
+                    }
+                    else if (!_queuedActions.TryDequeue(out actionCtx))
+                    {
+                        actionCtx = null;
+                    }
+                }
+
+                if (batch != null)
+                {
+                    await ExecuteFallbackAsync(batch);
+                }
+                else if (actionCtx != null)
+                {
+                    await actionCtx.ExecuteAsync();
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            _maxParallelizationSemaphore.Release();
+        }
+
+        private List<ActionContext<TResult>> Dequeue(int count)
+        {
+            var batch = new List<ActionContext<TResult>>(count);
+            while (batch.Count != count)
+            {
+                _queuedActions.TryDequeue(out var actionCtx);
+                batch.Add(actionCtx);
+            }
+
+            return batch;
         }
 
         private async Task ExecuteFallbackAsync(IReadOnlyCollection<ActionContext<TResult>> batch)
@@ -90,29 +127,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             }
         }
 
-        private async Task ExecuteAsync()
-        {
-            while (_queuedActions.TryDequeue(out var actionCtx))
-            {
-                await actionCtx.ExecuteAsync();
-            }
-
-            _maxParallelizationSemaphore.Release();
-
-            //// This check is needed to handle the possible race-condition where an
-            //// action is enqueued between the last _queuedActions.TryDequeue(...)
-            //// and _maxParallelizationSemaphore.Release(), AND the thread who did
-            //// the enqueuing was unable to enter the _maxParallelizationSemaphore.
-            if (!_queuedActions.IsEmpty && _maxParallelizationSemaphore.Wait(0))
-            {
-                await ExecuteAsync();
-            }
-        }
-
         /// <inheritdoc/>
-        public void Dispose()
-        {
-            _maxParallelizationSemaphore.Dispose();
-        }
+        public void Dispose() => _maxParallelizationSemaphore.Dispose();
     }
 }

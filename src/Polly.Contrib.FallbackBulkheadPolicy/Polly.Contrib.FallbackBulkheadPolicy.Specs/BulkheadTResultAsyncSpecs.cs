@@ -41,7 +41,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy.Specs
         public void Should_throw_when_onBulkheadRejected_is_null()
         {
             Action policy = () => AsyncFallbackBulkheadPolicy
-                .Create<int>(1, 0, null);
+                .Create<int>(1, null, 0);
 
             policy.ShouldThrow<ArgumentNullException>().And
                 .ParamName.Should().Be("onBulkheadRejectedAsync");
