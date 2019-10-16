@@ -16,20 +16,8 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
         public static AsyncFallbackBulkheadPolicy<TResult> Create<TResult>(int maxParallelization)
         {
             FallbackAction<TResult> doNothingAsync = _ => TaskHelper.EmptyTask;
-            return Create<TResult>(maxParallelization, doNothingAsync, 0);
+            return Create(maxParallelization, doNothingAsync);
         }
-
-        /// <summary>
-        /// <para>Builds a bulkhead isolation <see cref="AsyncPolicy{TResult}"/>, which limits the maximum concurrency of actions executed through the policy.  Imposing a maximum concurrency limits the potential of governed actions, when faulting, to bring down the system.</para>
-        /// <para>When an execution would cause the number of actions executing concurrently through the policy to exceed <paramref name="maxParallelization"/>, the action is not executed and a <see cref="BulkheadRejectedException"/> is thrown.</para>
-        /// </summary>
-        /// <param name="maxParallelization">The maximum number of concurrent actions that may be executing through the policy.</param>
-        /// <param name="onBulkheadRejectedAsync">An action to call asynchronously, if the bulkhead rejects execution due to oversubscription.</param>
-        /// <exception cref="System.ArgumentOutOfRangeException">maxParallelization;Value must be greater than zero.</exception>
-        /// <exception cref="System.ArgumentNullException">onBulkheadRejectedAsync</exception>
-        /// <returns>The policy instance.</returns>
-        public static AsyncFallbackBulkheadPolicy<TResult> Create<TResult>(int maxParallelization, FallbackAction<TResult> onBulkheadRejectedAsync)
-            => Create<TResult>(maxParallelization, onBulkheadRejectedAsync, 0);
 
         /// <summary>
         /// Builds a bulkhead isolation <see cref="AsyncPolicy{TResult}" />, which limits the maximum concurrency of actions executed through the policy.  Imposing a maximum concurrency limits the potential of governed actions, when faulting, to bring down the system.
@@ -44,7 +32,7 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
         public static AsyncFallbackBulkheadPolicy<TResult> Create<TResult>(int maxParallelization, int maxQueuingActions)
         {
             FallbackAction<TResult> doNothingAsync = _ => TaskHelper.EmptyTask;
-            return Create<TResult>(maxParallelization, doNothingAsync, maxQueuingActions);
+            return Create(maxParallelization, doNothingAsync, maxQueuingActions);
         }
 
         /// <summary>
