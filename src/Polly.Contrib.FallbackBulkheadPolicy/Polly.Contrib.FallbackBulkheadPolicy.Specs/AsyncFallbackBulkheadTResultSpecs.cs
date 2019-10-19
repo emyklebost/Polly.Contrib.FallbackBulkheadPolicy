@@ -1,4 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
 using Polly.Utilities;
 using Xunit;
@@ -41,11 +45,64 @@ namespace Polly.Contrib.FallbackBulkheadPolicy.Specs
 
         #endregion
 
-        #region onBulkheadRejected delegate
+        #region fallbackAction
 
-        [Fact]
-        public void Should_call_onBulkheadRejected_with_passed_context()
+        [Theory]
+        [InlineData(4, 100, 1000)]
+        [InlineData(1, 100, 100)]
+        [InlineData(1, 100, 10)]
+        [InlineData(100, 100, 100)]
+        public async Task Should_call_fallbackAction_on_exceeded_queueLimit(
+            int maxParallelization,
+            int maxQueuingActionsLimit,
+            int numberOfActions)
         {
+            const string argKey = "arg";
+            var numberOfRegularCalls = 0;
+            var numberOfFallbackCalls = 0;
+
+            async Task<TArg> RegularActionAsync<TArg>(Context pollyContext)
+            {
+                await Task.Delay(10);
+                Interlocked.Increment(ref numberOfRegularCalls);
+                return (TArg)pollyContext[argKey];
+            }
+
+            async Task FallbackActionAsync<TArg>(
+                IReadOnlyCollection<ActionContext<TArg>> actionContexts)
+            {
+                await Task.Delay(50);
+                Interlocked.Increment(ref numberOfFallbackCalls);
+
+                foreach (var actionCtx in actionContexts)
+                {
+                    var result = (TArg)actionCtx.PollyContext[argKey];
+                    actionCtx.TaskCompletionSource.SetResult(result);
+                }
+            }
+
+            using (var sut = AsyncFallbackBulkheadPolicy.Create<int>(
+                maxParallelization,
+                FallbackActionAsync,
+                maxQueuingActionsLimit))
+            {
+                var tasks = new List<Task<int>>();
+
+                for (int arg = 0; arg < numberOfActions; ++arg)
+                {
+                    var task = sut.ExecuteAsync(
+                        RegularActionAsync<int>,
+                        new Context { [argKey] = arg });
+
+                    tasks.Add(task);
+                }
+
+                var expected = Enumerable.Range(0, numberOfActions);
+                var results = await Task.WhenAll(tasks);
+                Assert.Equal(expected, results);
+
+                Assert.Equal(numberOfActions, numberOfRegularCalls + (numberOfFallbackCalls * maxQueuingActionsLimit));
+            }
         }
 
         #endregion
