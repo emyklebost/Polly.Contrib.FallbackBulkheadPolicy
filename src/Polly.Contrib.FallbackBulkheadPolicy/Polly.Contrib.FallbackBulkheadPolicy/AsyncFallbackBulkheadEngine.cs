@@ -14,44 +14,60 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             ConcurrentQueue<ActionContext<TResult>> queuedActions,
             FallbackAction<TResult> fallbackAction)
         {
-            if (!maxParallelizationSemaphore.Wait(0))
+            do
             {
-                return;
-            }
+                if (!maxParallelizationSemaphore.Wait(0))
+                {
+                    return;
+                }
 
+                await Task
+                    .Run(() => queuedActions.ExecuteAsync(maxQueueingActionsLimits, fallbackAction))
+                    .ConfigureAwait(false);
+
+                maxParallelizationSemaphore.Release();
+
+            // This extra check is needed to prevent the possible race-condition where an action has
+            // been enqueued in an empty queue while the Semaphore is being released, leading to a
+            // situation where the last action is stuck in the queue until a new action is enqueued.
+            } while (!queuedActions.IsEmpty);
+        }
+
+        private static async Task ExecuteAsync<TResult>(
+            this ConcurrentQueue<ActionContext<TResult>> queuedActions,
+            int[] maxQueueingActionsLimits,
+            FallbackAction<TResult> fallbackAction)
+        {
             while (true)
             {
-                var batch = default(ActionContext<TResult>[]);
+                var actionCtxBatch = default(ActionContext<TResult>[]);
                 var actionCtx = default(ActionContext<TResult>);
 
                 lock (queuedActions)
                 {
-                    var exceededLimits = maxQueueingActionsLimits.Where(x => queuedActions.Count >= x);
+                    var exceededLimits = maxQueueingActionsLimits.Where(x => x <= queuedActions.Count);
                     if (exceededLimits.Any())
                     {
-                        batch = queuedActions.Dequeue(exceededLimits.First());
+                        actionCtxBatch = queuedActions.Dequeue(exceededLimits.First());
                     }
-                    else if (!queuedActions.TryDequeue(out actionCtx))
+                    else if (queuedActions.TryDequeue(out actionCtx))
                     {
-                        actionCtx = null;
+                    }
+                    else
+                    {
+                        break;
                     }
                 }
 
-                if (batch != null)
+                if (actionCtxBatch != null)
                 {
-                    await fallbackAction.ExecuteAsync(batch);
-                }
-                else if (actionCtx != null)
-                {
-                    await actionCtx.ExecuteAsync();
+                    await actionCtxBatch.ExecuteAsync(fallbackAction);
                 }
                 else
                 {
-                    break;
+                    await actionCtx.ExecuteAsync();
                 }
             }
-
-            maxParallelizationSemaphore.Release();
         }
 
         private static T[] Dequeue<T>(
@@ -61,24 +77,23 @@ namespace Polly.Contrib.FallbackBulkheadPolicy
             var batch = new T[count];
             for (int i = 0; i < count; ++i)
             {
-                queue.TryDequeue(out var actionCtx);
-                batch[i] = actionCtx;
+                queue.TryDequeue(out batch[i]);
             }
 
             return batch;
         }
 
         private static async Task ExecuteAsync<TResult>(
-            this FallbackAction<TResult> fallbackAction,
-            ActionContext<TResult>[] batch)
+            this ActionContext<TResult>[] actionCtxBatch,
+            FallbackAction<TResult> fallbackAction)
         {
             try
             {
-                await fallbackAction(batch);
+                await fallbackAction(actionCtxBatch);
             }
             catch (Exception ex)
             {
-                foreach (var actionCtx in batch)
+                foreach (var actionCtx in actionCtxBatch)
                 {
                     actionCtx.TaskCompletionSource.TrySetException(ex);
                 }
